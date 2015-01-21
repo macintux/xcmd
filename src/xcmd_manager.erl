@@ -104,12 +104,10 @@
 start_link() ->
     start_link([]).
 
-%% @doc Start riak_core_metadadata_manager and link to calling process.
+%% @doc Start xcmd_manager and link to calling process.
 %%
-%% The following options can be provided:
+%% The following options are supported; `data_dir' is mandatory.
 %%    * data_dir: the root directory to place cluster metadata files.
-%%                if not provided this defaults to the `cluster_meta' directory in
-%%                riak_core's `platform_data_dir'.
 %%    * nodename: the node identifier (for use in logical clocks). defaults to node()
 -spec start_link(mm_opts()) -> {ok, pid()} | ignore | {error, term()}.
 start_link(Opts) ->
@@ -118,7 +116,7 @@ start_link(Opts) ->
 %% @doc Reads the value for a prefixed key. If the value does not exist `undefined' is
 %% returned. otherwise a Dotted Version Vector Set is returned. When reading the value
 %% for a subsequent call to put/3 the context can be obtained using
-%% xcmd_object:context/1. Values can obtained w/ riak_core_metadata_object:values/1.
+%% xcmd_object:context/1. Values can obtained w/ xcmd_object:values/1.
 -spec get(metadata_pkey()) -> metadata_object() | undefined.
 get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
@@ -305,7 +303,7 @@ graft(Context, Obj) ->
 %% @doc Trigger an exchange
 -spec exchange(node()) -> {ok, pid()} | {error, term()}.
 exchange(Peer) ->
-    Timeout = app_helper:get_env(riak_core, metadata_exchange_timeout, 60000),
+    Timeout = app_helper:get_env(xcmd, metadata_exchange_timeout, 60000),
     case xcmd_exchange_fsm:start(Peer, Timeout) of
         {ok, Pid} ->
             {ok, Pid};
@@ -656,8 +654,8 @@ dets_filename({Prefix, SubPrefix}=FullPrefix) ->
 dets_filename_part(Part) when is_atom(Part) ->
     dets_filename_part(list_to_binary(atom_to_list(Part)));
 dets_filename_part(Part) when is_binary(Part) ->
-    <<MD5Int:128/integer>> = riak_core_util:md5(Part),
-    riak_core_util:integer_to_list(MD5Int, 16).
+    <<MD5Int:128/integer>> = crypto:hash(md5, Part),
+    integer_to_list(MD5Int, 16).
 
 dets_filename_trailer(FullPrefix) ->
     [dets_filename_trailer_part(Part) || Part <- tuple_to_list(FullPrefix)].
@@ -673,13 +671,4 @@ dets_fold_tabnames(Fun, Acc0) ->
                end, Acc0, ?MANIFEST).
 
 data_root(Opts) ->
-    case proplists:get_value(data_dir, Opts) of
-        undefined -> default_data_root();
-        Root -> Root
-    end.
-
-default_data_root() ->
-    case application:get_env(riak_core, platform_data_dir) of
-        {ok, PRoot} -> filename:join(PRoot, "cluster_meta");
-        undefined -> undefined
-    end.
+    proplists:get_value(data_dir, Opts).
