@@ -17,7 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_metadata).
+-module(xcmd).
 
 -export([get/2,
          get/3,
@@ -41,7 +41,7 @@
          delete/2,
          delete/3]).
 
--include("riak_core_metadata.hrl").
+-include("xcmd.hrl").
 
 -export_type([iterator/0]).
 
@@ -60,7 +60,7 @@
 -type it_opt()              :: it_opt_resolver() | it_opt_default() | it_opt_keymatch().
 -type it_opts()             :: [it_opt()].
 -type fold_opts()           :: it_opts().
--type iterator()            :: {riak_core_metadata_manager:metadata_iterator(), it_opts()}.
+-type iterator()            :: {xcmd_manager:metadata_iterator(), it_opts()}.
 
 %% Put Option Types
 -type put_opts()            :: [].
@@ -94,7 +94,7 @@ get({Prefix, SubPrefix}=FullPrefix, Key, Opts)
     Default = get_option(default, Opts, undefined),
     ResolveMethod = get_option(resolver, Opts, lww),
     AllowPut = get_option(allow_put, Opts, true),
-    case riak_core_metadata_manager:get(PKey) of
+    case xcmd_manager:get(PKey) of
         undefined -> Default;
         Existing ->
             maybe_tombstone(maybe_resolve(PKey, Existing, ResolveMethod, AllowPut), Default)
@@ -176,24 +176,24 @@ iterator({Prefix, SubPrefix}=FullPrefix, Opts)
   when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     KeyMatch = proplists:get_value(match, Opts),
-    It = riak_core_metadata_manager:iterator(FullPrefix, KeyMatch),
+    It = xcmd_manager:iterator(FullPrefix, KeyMatch),
     {It, Opts}.
 
 %% @doc Advances the iterator
 -spec itr_next(iterator()) -> iterator().
 itr_next({It, Opts}) ->
-    It1 = riak_core_metadata_manager:iterate(It),
+    It1 = xcmd_manager:iterate(It),
     {It1, Opts}.
 
 %% @doc Closes the iterator
 -spec itr_close(iterator()) -> ok.
 itr_close({It, _Ots}) ->
-    riak_core_metadata_manager:iterator_close(It).
+    xcmd_manager:iterator_close(It).
 
 %% @doc Returns true if there is nothing more to iterate over
 -spec itr_done(iterator()) -> boolean().
 itr_done({It, _Opts}) ->
-    riak_core_metadata_manager:iterator_done(It).
+    xcmd_manager:iterator_done(It).
 
 %% @doc Return the key and value(s) pointed at by the iterator. Before
 %% calling this function, check the iterator is not complete w/ itr_done/1. If a resolver
@@ -215,13 +215,13 @@ itr_done({It, _Opts}) ->
                                      metadata_tombstone()}.
 itr_key_values({It, Opts}) ->
     Default = itr_default({It, Opts}),
-    {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
+    {Key, Obj} = xcmd_manager:iterator_value(It),
     AllowPut = get_option(allow_put, Opts, true),
     case get_option(resolver, Opts, undefined) of
         undefined ->
-            {Key, maybe_tombstones(riak_core_metadata_object:values(Obj), Default)};
+            {Key, maybe_tombstones(xcmd_object:values(Obj), Default)};
         Resolver ->
-            Prefix = riak_core_metadata_manager:iterator_prefix(It),
+            Prefix = xcmd_manager:iterator_prefix(It),
             PKey = prefixed_key(Prefix, Key),
             Value = maybe_tombstone(maybe_resolve(PKey, Obj, Resolver, AllowPut), Default),
             {Key, Value}
@@ -232,7 +232,7 @@ itr_key_values({It, Opts}) ->
 %% No conflict resolution will be performed as a result of calling this function.
 -spec itr_key(iterator()) -> metadata_key().
 itr_key({It, _Opts}) ->
-    {Key, _} = riak_core_metadata_manager:iterator_value(It),
+    {Key, _} = xcmd_manager:iterator_value(It),
     Key.
 
 %% @doc Return all sibling values pointed at by the iterator. Before
@@ -241,8 +241,8 @@ itr_key({It, _Opts}) ->
 -spec itr_values(iterator()) -> [metadata_value() | metadata_tombstone()].
 itr_values({It, Opts}) ->
     Default = itr_default({It, Opts}),
-    {_, Obj} = riak_core_metadata_manager:iterator_value(It),
-    maybe_tombstones(riak_core_metadata_object:values(Obj), Default).
+    {_, Obj} = xcmd_manager:iterator_value(It),
+    maybe_tombstones(xcmd_object:values(Obj), Default).
 
 %% @doc Return a single value pointed at by the iterator. If there are conflicts and
 %% a resolver was specified in the options when creating this iterator, they will be
@@ -257,18 +257,18 @@ itr_values({It, Opts}) ->
 -spec itr_value(iterator()) -> metadata_value() | metadata_tombstone() | {error, conflict}.
 itr_value({It, Opts}) ->
     Default = itr_default({It, Opts}),
-    {Key, Obj} = riak_core_metadata_manager:iterator_value(It),
+    {Key, Obj} = xcmd_manager:iterator_value(It),
     AllowPut = get_option(allow_put, Opts, true),
     case get_option(resolver, Opts, undefined) of
         undefined ->
-            case riak_core_metadata_object:value_count(Obj) of
+            case xcmd_object:value_count(Obj) of
                 1 ->
-                    maybe_tombstone(riak_core_metadata_object:value(Obj), Default);
+                    maybe_tombstone(xcmd_object:value(Obj), Default);
                 _ ->
                     {error, conflict}
             end;
         Resolver ->
-            Prefix = riak_core_metadata_manager:iterator_prefix(It),
+            Prefix = xcmd_manager:iterator_prefix(It),
             PKey = prefixed_key(Prefix, Key),
             maybe_tombstone(maybe_resolve(PKey, Obj, Resolver, AllowPut), Default)
     end.
@@ -292,7 +292,7 @@ itr_default({_, Opts}=It) ->
 %% (full-)prefix. `undefined' is returned.
 -spec prefix_hash(metadata_prefix() | binary() | atom()) -> binary() | undefined.
 prefix_hash(Prefix) when is_tuple(Prefix) or is_atom(Prefix) or is_binary(Prefix) ->
-    riak_core_metadata_hashtree:prefix_hash(Prefix).
+    xcmd_hashtree:prefix_hash(Prefix).
 
 %% @doc same as put(FullPrefix, Key, Value, [])
 -spec put(metadata_prefix(), metadata_key(), metadata_value() | metadata_modifier()) -> ok.
@@ -315,7 +315,7 @@ put({Prefix, SubPrefix}=FullPrefix, Key, ValueOrFun, _Opts)
        (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
     PKey = prefixed_key(FullPrefix, Key),
     CurrentContext = current_context(PKey),
-    Updated = riak_core_metadata_manager:put(PKey, CurrentContext, ValueOrFun),
+    Updated = xcmd_manager:put(PKey, CurrentContext, ValueOrFun),
     broadcast(PKey, Updated).
 
 %% @doc same as delete(FullPrefix, Key, [])
@@ -338,28 +338,28 @@ delete(FullPrefix, Key, _Opts) ->
 
 %% @private
 current_context(PKey) ->
-    case riak_core_metadata_manager:get(PKey) of
-        undefined -> riak_core_metadata_object:empty_context();
-        CurrentMeta -> riak_core_metadata_object:context(CurrentMeta)
+    case xcmd_manager:get(PKey) of
+        undefined -> xcmd_object:empty_context();
+        CurrentMeta -> xcmd_object:context(CurrentMeta)
     end.
 
 %% @private
 maybe_resolve(PKey, Existing, Method, AllowPut) ->
-    SibCount = riak_core_metadata_object:value_count(Existing),
+    SibCount = xcmd_object:value_count(Existing),
     maybe_resolve(PKey, Existing, SibCount, Method, AllowPut).
 
 %% @private
 maybe_resolve(_PKey, Existing, 1, _Method, _AllowPut) ->
-    riak_core_metadata_object:value(Existing);
+    xcmd_object:value(Existing);
 maybe_resolve(PKey, Existing, _, Method, AllowPut) ->
-    Reconciled = riak_core_metadata_object:resolve(Existing, Method),
-    RContext = riak_core_metadata_object:context(Reconciled),
-    RValue = riak_core_metadata_object:value(Reconciled),
+    Reconciled = xcmd_object:resolve(Existing, Method),
+    RContext = xcmd_object:context(Reconciled),
+    RValue = xcmd_object:value(Reconciled),
     case AllowPut of
         false ->
             ok;
         true ->
-            Stored = riak_core_metadata_manager:put(PKey, RContext, RValue),
+            Stored = xcmd_manager:put(PKey, RContext, RValue),
             broadcast(PKey, Stored)
     end,
     RValue.
@@ -378,7 +378,7 @@ maybe_tombstone(Value, _Default) ->
 broadcast(PKey, Obj) ->
     Broadcast = #metadata_broadcast{pkey = PKey,
                                     obj  = Obj},
-    riak_core_broadcast:broadcast(Broadcast, riak_core_metadata_manager).
+    xcmd_broadcast:broadcast(Broadcast, xcmd_manager).
 
 %% @private
 -spec prefixed_key(metadata_prefix(), metadata_key()) -> metadata_pkey().

@@ -17,7 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_metadata_object).
+-module(xcmd_object).
 
 -export([value/1,
          values/1,
@@ -31,7 +31,7 @@
          is_stale/2,
          equal_context/2]).
 
--include("riak_core_metadata.hrl").
+-include("xcmd.hrl").
 
 %% @doc returns a single value. if the object holds more than one value an error is generated
 %% @see values/2

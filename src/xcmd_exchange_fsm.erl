@@ -17,7 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_metadata_exchange_fsm).
+-module(xcmd_exchange_fsm).
 
 -behaviour(gen_fsm).
 
@@ -102,7 +102,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 prepare(start, State) ->
     %% get local lock
-    case riak_core_metadata_hashtree:lock() of
+    case xcmd_hashtree:lock() of
         ok ->
             %% get remote lock
             remote_lock_request(State#state.peer),
@@ -141,15 +141,15 @@ update({update_error, _Error}, State) ->
 
 exchange(timeout, State=#state{peer=Peer}) ->
     RemoteFun = fun(Prefixes, {get_bucket, {Level, Bucket}}) ->
-                        riak_core_metadata_hashtree:get_bucket(Peer, Prefixes, Level, Bucket);
+                        xcmd_hashtree:get_bucket(Peer, Prefixes, Level, Bucket);
                    (Prefixes, {key_hashes, Segment}) ->
-                        riak_core_metadata_hashtree:key_hashes(Peer, Prefixes, Segment)
+                        xcmd_hashtree:key_hashes(Peer, Prefixes, Segment)
                 end,
     HandlerFun = fun(Diff, Acc) ->
                          repair(Peer, Diff),
                          track_repair(Diff, Acc)
                  end,
-    Res = riak_core_metadata_hashtree:compare(RemoteFun, HandlerFun,
+    Res = xcmd_hashtree:compare(RemoteFun, HandlerFun,
                                               #exchange{local=0,remote=0,keys=0}),
     #exchange{local=LocalPrefixes,
               remote=RemotePrefixes,
@@ -195,30 +195,30 @@ repair_prefix(Peer, Type, [Prefix, SubPrefix]) ->
 
 %% @private
 repair_sub_prefixes(Type, Peer, Prefix, It) ->
-    case riak_core_metadata_manager:iterator_done(It) of
+    case xcmd_manager:iterator_done(It) of
         true ->
-            riak_core_metadata_manager:iterator_close(It);
+            xcmd_manager:iterator_close(It);
         false ->
-            SubPrefix = riak_core_metadata_manager:iterator_value(It),
+            SubPrefix = xcmd_manager:iterator_value(It),
             FullPrefix = {Prefix, SubPrefix},
 
             ItType = repair_iterator_type(Type),
             ObjIt = repair_iterator(ItType, Peer, FullPrefix),
             repair_full_prefix(Type, Peer, FullPrefix, ObjIt),
             repair_sub_prefixes(Type, Peer, Prefix,
-                                riak_core_metadata_manager:iterate(It))
+                                xcmd_manager:iterate(It))
     end.
 
 %% @private
 repair_full_prefix(Type, Peer, FullPrefix, ObjIt) ->
-    case riak_core_metadata_manager:iterator_done(ObjIt) of
+    case xcmd_manager:iterator_done(ObjIt) of
         true ->
-            riak_core_metadata_manager:iterator_close(ObjIt);
+            xcmd_manager:iterator_close(ObjIt);
         false ->
-            {Key, Obj} = riak_core_metadata_manager:iterator_value(ObjIt),
+            {Key, Obj} = xcmd_manager:iterator_value(ObjIt),
             repair_other(Type, Peer, {FullPrefix, Key}, Obj),
             repair_full_prefix(Type, Peer, FullPrefix,
-                               riak_core_metadata_manager:iterate(ObjIt))
+                               xcmd_manager:iterate(ObjIt))
     end.
 
 %% @private
@@ -234,8 +234,8 @@ repair_keys(Peer, PrefixList, {_Type, KeyBin}) ->
     Key = binary_to_term(KeyBin),
     Prefix = list_to_tuple(PrefixList),
     PKey = {Prefix, Key},
-    LocalObj = riak_core_metadata_manager:get(PKey),
-    RemoteObj = riak_core_metadata_manager:get(Peer, PKey),
+    LocalObj = xcmd_manager:get(PKey),
+    RemoteObj = xcmd_manager:get(Peer, PKey),
     merge(undefined, PKey, RemoteObj),
     merge(Peer, PKey, LocalObj),
     ok.
@@ -243,18 +243,18 @@ repair_keys(Peer, PrefixList, {_Type, KeyBin}) ->
 %% @private
 %% context is ignored since its in object, so pass undefined
 merge(undefined, PKey, RemoteObj) ->
-    riak_core_metadata_manager:merge({PKey, undefined}, RemoteObj);
+    xcmd_manager:merge({PKey, undefined}, RemoteObj);
 merge(Peer, PKey, LocalObj) ->
-    riak_core_metadata_manager:merge(Peer, {PKey, undefined}, LocalObj).
+    xcmd_manager:merge(Peer, {PKey, undefined}, LocalObj).
 
 
 %% @private
 repair_iterator(local, _, Prefix) when is_atom(Prefix) orelse is_binary(Prefix) ->
-    riak_core_metadata_manager:iterator(Prefix);
+    xcmd_manager:iterator(Prefix);
 repair_iterator(local, _, Prefix) when is_tuple(Prefix) ->
-    riak_core_metadata_manager:iterator(Prefix, undefined);
+    xcmd_manager:iterator(Prefix, undefined);
 repair_iterator(remote, Peer, PrefixOrFull) ->
-    riak_core_metadata_manager:remote_iterator(Peer, PrefixOrFull).
+    xcmd_manager:remote_iterator(Peer, PrefixOrFull).
 
 %% @private
 repair_iterator_type(local) ->
@@ -275,7 +275,7 @@ track_repair({key_diffs, _, Diffs}, Acc=#exchange{keys=Keys}) ->
 remote_lock_request(Peer) ->
     Self = self(),
     as_event(fun() ->
-                     Res = riak_core_metadata_hashtree:lock(Peer, Self),
+                     Res = xcmd_hashtree:lock(Peer, Self),
                      {remote_lock, Res}
              end).
 
@@ -284,7 +284,7 @@ update_request(Node) ->
     as_event(fun() ->
                      %% acquired lock so we know there is no other update
                      %% and tree is built
-                     case riak_core_metadata_hashtree:update(Node) of
+                     case xcmd_hashtree:update(Node) of
                          ok -> tree_updated;
                          Error -> {update_error, Error}
                      end

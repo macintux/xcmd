@@ -17,10 +17,10 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_metadata_manager).
+-module(xcmd_manager).
 
 -behaviour(gen_server).
--behaviour(riak_core_broadcast_handler).
+-behaviour(xcmd_broadcast_handler).
 
 %% API
 -export([start_link/0,
@@ -40,7 +40,7 @@
          put/3,
          merge/3]).
 
-%% riak_core_broadcast_handler callbacks
+%% xcmd_broadcast_handler callbacks
 -export([broadcast_data/1,
          merge/2,
          is_stale/1,
@@ -53,7 +53,7 @@
 
 -export_type([metadata_iterator/0]).
 
--include("riak_core_metadata.hrl").
+-include("xcmd.hrl").
 
 -define(SERVER, ?MODULE).
 -define(MANIFEST, cluster_meta_manifest).
@@ -118,7 +118,7 @@ start_link(Opts) ->
 %% @doc Reads the value for a prefixed key. If the value does not exist `undefined' is
 %% returned. otherwise a Dotted Version Vector Set is returned. When reading the value
 %% for a subsequent call to put/3 the context can be obtained using
-%% riak_core_metadata_object:context/1. Values can obtained w/ riak_core_metadata_object:values/1.
+%% xcmd_object:context/1. Values can obtained w/ riak_core_metadata_object:values/1.
 -spec get(metadata_pkey()) -> metadata_object() | undefined.
 get({{Prefix, SubPrefix}, _Key}=PKey) when (is_binary(Prefix) orelse is_atom(Prefix)) andalso
                                            (is_binary(SubPrefix) orelse is_atom(SubPrefix)) ->
@@ -247,15 +247,15 @@ merge(Node, {PKey, _Context}, Obj) ->
     gen_server:call({?SERVER, Node}, {merge, PKey, Obj}, infinity).
 
 %%%===================================================================
-%%% riak_core_broadcast_handler callbacks
+%%% xcmd_broadcast_handler callbacks
 %%%===================================================================
 
-%% @doc Deconstructs are broadcast that is sent using `riak_core_metadata_manager' as the
+%% @doc Deconstructs are broadcast that is sent using `xcmd_manager' as the
 %% handling module returning the message id and payload.
 -spec broadcast_data(metadata_broadcast()) -> {{metadata_pkey(), metadata_context()},
                                                metadata_object()}.
 broadcast_data(#metadata_broadcast{pkey=Key, obj=Obj}) ->
-    Context = riak_core_metadata_object:context(Obj),
+    Context = xcmd_object:context(Obj),
     {{Key, Context}, Obj}.
 
 %% @doc Merges a remote copy of a metadata record sent via broadcast w/ the local view
@@ -290,7 +290,7 @@ graft({PKey, Context}) ->
     end.
 
 graft(Context, Obj) ->
-    case riak_core_metadata_object:equal_context(Context, Obj) of
+    case xcmd_object:equal_context(Context, Obj) of
         false ->
             %% when grafting the context will never be causally newer
             %% than what we have locally. Since its not equal, it must be
@@ -306,7 +306,7 @@ graft(Context, Obj) ->
 -spec exchange(node()) -> {ok, pid()} | {error, term()}.
 exchange(Peer) ->
     Timeout = app_helper:get_env(riak_core, metadata_exchange_timeout, 60000),
-    case riak_core_metadata_exchange_fsm:start(Peer, Timeout) of
+    case xcmd_exchange_fsm:start(Peer, Timeout) of
         {ok, Pid} ->
             {ok, Pid};
         {error, Reason} ->
@@ -378,7 +378,7 @@ handle_call({iterator_close, RemoteRef}, _From, State) ->
     {reply, ok, State};
 handle_call({is_stale, PKey, Context}, _From, State) ->
     Existing = read(PKey),
-    IsStale = riak_core_metadata_object:is_stale(Context, Existing),
+    IsStale = xcmd_object:is_stale(Context, Existing),
     {reply, IsStale, State}.
 
 %% @private
@@ -544,12 +544,12 @@ iterator_match(KeyMatch) ->
 
 read_modify_write(PKey, Context, ValueOrFun, State=#state{serverid=ServerId}) ->
     Existing = read(PKey),
-    Modified = riak_core_metadata_object:modify(Existing, Context, ValueOrFun, ServerId),
+    Modified = xcmd_object:modify(Existing, Context, ValueOrFun, ServerId),
     store(PKey, Modified, State).
 
 read_merge_write(PKey, Obj, State) ->
     Existing = read(PKey),
-    case riak_core_metadata_object:reconcile(Obj, Existing) of
+    case xcmd_object:reconcile(Obj, Existing) of
         false -> {false, State};
         {true, Reconciled} ->
             {_, NewState} = store(PKey, Reconciled, State),
@@ -561,9 +561,9 @@ store({FullPrefix, Key}=PKey, Metadata, State) ->
     maybe_init_dets(FullPrefix, State#state.data_root),
 
     Objs = [{Key, Metadata}],
-    Hash = riak_core_metadata_object:hash(Metadata),
+    Hash = xcmd_object:hash(Metadata),
     ets:insert(ets_tab(FullPrefix), Objs),
-    riak_core_metadata_hashtree:insert(PKey, Hash),
+    xcmd_hashtree:insert(PKey, Hash),
     ok = dets_insert(dets_tabname(FullPrefix), Objs),
     {Metadata, State}.
 

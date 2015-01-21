@@ -17,7 +17,7 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(riak_core_metadata_hashtree).
+-module(xcmd_hashtree).
 
 -behaviour(gen_server).
 
@@ -39,7 +39,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
--include("riak_core_metadata.hrl").
+-include("xcmd.hrl").
 
 -define(SERVER, ?MODULE).
 
@@ -297,33 +297,33 @@ build_async(State) ->
 
 %% @private
 build() ->
-    PrefixIt = riak_core_metadata_manager:iterator(),
+    PrefixIt = xcmd_manager:iterator(),
     build(PrefixIt).
 
 %% @private
 build(PrefixIt) ->
-    case riak_core_metadata_manager:iterator_done(PrefixIt) of
+    case xcmd_manager:iterator_done(PrefixIt) of
         true ->
-            riak_core_metadata_manager:iterator_close(PrefixIt);
+            xcmd_manager:iterator_close(PrefixIt);
         false ->
-            Prefix = riak_core_metadata_manager:iterator_value(PrefixIt),
-            ObjIt = riak_core_metadata_manager:iterator(Prefix, undefined),
+            Prefix = xcmd_manager:iterator_value(PrefixIt),
+            ObjIt = xcmd_manager:iterator(Prefix, undefined),
             build(PrefixIt, ObjIt)
     end.
 
 %% @private
 build(PrefixIt, ObjIt) ->
-    case riak_core_metadata_manager:iterator_done(ObjIt) of
+    case xcmd_manager:iterator_done(ObjIt) of
         true ->
-            riak_core_metadata_manager:iterator_close(ObjIt),
-            build(riak_core_metadata_manager:iterate(PrefixIt));
+            xcmd_manager:iterator_close(ObjIt),
+            build(xcmd_manager:iterate(PrefixIt));
         false ->
-            FullPrefix = riak_core_metadata_manager:iterator_prefix(ObjIt),
-            {Key, Obj} = riak_core_metadata_manager:iterator_value(ObjIt),
-            Hash = riak_core_metadata_object:hash(Obj),
+            FullPrefix = xcmd_manager:iterator_prefix(ObjIt),
+            {Key, Obj} = xcmd_manager:iterator_value(ObjIt),
+            Hash = xcmd_object:hash(Obj),
             %% insert only if missing to not clash w/ newer writes during build
             ?MODULE:insert({FullPrefix, Key}, Hash, true),
-            build(PrefixIt, riak_core_metadata_manager:iterate(ObjIt))
+            build(PrefixIt, xcmd_manager:iterate(ObjIt))
     end.
 
 %% @private
