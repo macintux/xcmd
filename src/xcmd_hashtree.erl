@@ -22,8 +22,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
-         start_link/1,
+-export([start_link/1,
          insert/2,
          insert/3,
          prefix_hash/1,
@@ -60,21 +59,13 @@
 %%% API
 %%%===================================================================
 
-%% @doc Starts the process using {@link start_link/1}, passing in the
-%% directory where other cluster metadata is stored in `platform_data_dir'
-%% as the data root.
--spec start_link() -> {ok, pid()} | ignore | {error, term()}.
-start_link() ->
-    PRoot = app_helper:get_env(riak_core, platform_data_dir),
-    DataRoot = filename:join(PRoot, "cluster_meta/trees"),
-    start_link(DataRoot).
-
 %% @doc Starts a registered process that manages a {@link
 %% hashtree_tree} for Cluster Metadata. Data for the tree is stored,
 %% for the lifetime of the process (assuming it shutdowns gracefully),
 %% in the directory `DataRoot'.
 -spec start_link(file:filename()) -> {ok, pid()} | ignore | {error, term()}.
-start_link(DataRoot) ->
+start_link(PRoot) ->
+    DataRoot = filename:join(PRoot, "trees"),
     gen_server:start_link({local, ?SERVER}, ?MODULE, [DataRoot], []).
 
 %% @doc Same as insert(PKey, Hash, false).
@@ -363,5 +354,5 @@ prepare_pkey({FullPrefix, Key}) ->
 
 %% @private
 schedule_tick() ->
-    TickMs = app_helper:get_env(riak_core, metadata_hashtree_timer, 10000),
+    TickMs = app_helper:get_env(xcmd, metadata_hashtree_timer, 10000),
     erlang:send_after(TickMs, ?MODULE, tick).
