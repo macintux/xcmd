@@ -144,7 +144,7 @@ broadcast(Broadcast, Mod) ->
 
 
 %% @doc Notifies broadcast server of membership update given a new ring
--spec ring_update(riak_core_ring:riak_core_ring()) -> ok.
+-spec ring_update([node()]) -> ok.
 ring_update(Ring) ->
     gen_server:cast(?SERVER, {ring_update, Ring}).
 
@@ -275,7 +275,7 @@ handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({ring_update, Ring}, State=#state{all_members=BroadcastMembers}) ->
-    CurrentMembers = ordsets:from_list(all_broadcast_members(Ring)),
+    CurrentMembers = ordsets:from_list(Ring),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
     State1 = case ordsets:size(New) > 0 of
@@ -584,10 +584,6 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
       lazy_sets     = orddict:new(),
       all_members   = ordsets:from_list(AllMembers)
      }.
-
-%% TODO Delete this func once it's no longer used?
-all_broadcast_members(Ring) ->
-    riak_core_ring:all_members(Ring).
 
 init_peers(Members) ->
     case length(Members) of
