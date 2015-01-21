@@ -22,7 +22,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
+-export([start_link/2,
          start_link/4,
          broadcast/2,
          ring_update/1,
@@ -102,22 +102,17 @@
 %%%===================================================================
 
 %% @doc Starts the broadcast server on this node. The initial membership list is
-%% fetched from the ring. If the node is a singleton then the initial eager and lazy
+%% passed in as an argument. If the node is a singleton then the initial eager and lazy
 %% sets are empty. If there are two nodes, each will be in the others eager set and the
 %% lazy sets will be empty. When number of members is less than 5, each node will initially
 %% have one other node in its eager set and lazy set. If there are more than five nodes
 %% each node will have at most two other nodes in its eager set and one in its lazy set, initally.
 %% In addition, after the broadcast server is started, a callback is registered with ring_events
 %% to generate membership updates as the ring changes.
--spec start_link() -> {ok, pid()} | ignore | {error, term()}.
-start_link() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Members = all_broadcast_members(Ring),
+-spec start_link([node()], [module()]) -> {ok, pid()} | ignore | {error, term()}.
+start_link(Members, Mods) ->
     {InitEagers, InitLazys} = init_peers(Members),
-    Mods = app_helper:get_env(riak_core, broadcast_mods, [riak_core_metadata_manager]),
-    Res = start_link(Members, InitEagers, InitLazys, Mods),
-    riak_core_ring_events:add_sup_callback(fun ?MODULE:ring_update/1),
-    Res.
+    start_link(Members, InitEagers, InitLazys, Mods).
 
 %% @doc Starts the broadcast server on this node. `InitMembers' must be a list
 %% of all members known to this node when starting the broadcast server.
@@ -149,7 +144,7 @@ broadcast(Broadcast, Mod) ->
 
 
 %% @doc Notifies broadcast server of membership update given a new ring
--spec ring_update(riak_core_ring:riak_core_ring()) -> ok.
+-spec ring_update([node()]) -> ok.
 ring_update(Ring) ->
     gen_server:cast(?SERVER, {ring_update, Ring}).
 
@@ -280,7 +275,7 @@ handle_cast({graft, MessageId, Mod, Round, Root, From}, State) ->
     State1 = handle_graft(Result, MessageId, Mod, Round, Root, From, State),
     {noreply, State1};
 handle_cast({ring_update, Ring}, State=#state{all_members=BroadcastMembers}) ->
-    CurrentMembers = ordsets:from_list(all_broadcast_members(Ring)),
+    CurrentMembers = ordsets:from_list(Ring),
     New = ordsets:subtract(CurrentMembers, BroadcastMembers),
     Removed = ordsets:subtract(BroadcastMembers, CurrentMembers),
     State1 = case ordsets:size(New) > 0 of
@@ -410,7 +405,7 @@ maybe_exchange(undefined, State) ->
 maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
     %% limit the number of exchanges this node can start concurrently.
     %% the exchange must (currently?) implement any "inbound" concurrency limits
-    ExchangeLimit = app_helper:get_env(riak_core, broadcast_start_exchange_limit, 1),
+    ExchangeLimit = app_helper:get_env(xcmd, broadcast_start_exchange_limit, 1),
     BelowLimit = not (length(Exchanges) >= ExchangeLimit),
     FreeMod = lists:keyfind(Mod, 1, Exchanges) =:= false,
     case BelowLimit and FreeMod of
@@ -578,7 +573,7 @@ schedule_exchange_tick() ->
     schedule_tick(exchange_tick, broadcast_exchange_timer, 10000).
 
 schedule_tick(Message, Timer, Default) ->
-    TickMs = app_helper:get_env(riak_core, Timer, Default),
+    TickMs = app_helper:get_env(xcmd, Timer, Default),
     erlang:send_after(TickMs, ?MODULE, Message).
 
 reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
@@ -589,9 +584,6 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
       lazy_sets     = orddict:new(),
       all_members   = ordsets:from_list(AllMembers)
      }.
-
-all_broadcast_members(Ring) ->
-    riak_core_ring:all_members(Ring).
 
 init_peers(Members) ->
     case length(Members) of
@@ -606,21 +598,47 @@ init_peers(Members) ->
         N when N < 5 ->
             %% 2 to 4 members, start with a fully connected tree
             %% with cycles. it will be adjusted as needed
-            Tree = riak_core_util:build_tree(1, Members, [cycles]),
+            Tree = build_tree(1, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
             InitLazys  = [lists:nth(random:uniform(N - 2), Members -- [node() | InitEagers])];
         N when N < 10 ->
             %% 5 to 9 members, start with gossip tree used by
             %% riak_core_gossip. it will be adjusted as needed
-            Tree = riak_core_util:build_tree(2, Members, [cycles]),
+            Tree = build_tree(2, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
             InitLazys  = [lists:nth(random:uniform(N - 3), Members -- [node() | InitEagers])];
         N ->
             %% 10 or more members, use a tree similar to riak_core_gossip
             %% but with higher fanout (larger initial eager set size)
             NEagers = round(math:log(N) + 1),
-            Tree = riak_core_util:build_tree(NEagers, Members, [cycles]),
+            Tree = build_tree(NEagers, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
             InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
     end,
     {InitEagers, InitLazys}.
+
+%% @doc Convert a list of elements into an N-ary tree. This conversion
+%%      works by treating the list as an array-based tree where, for
+%%      example in a binary 2-ary tree, a node at index i has children
+%%      2i and 2i+1. The conversion also supports a "cycles" mode where
+%%      the array is logically wrapped around to ensure leaf nodes also
+%%      have children by giving them backedges to other elements.
+%%
+%% Copied from riak_core_util.erl
+-spec build_tree(N :: integer(), Nodes :: [term()], Opts :: [term()])
+                -> orddict:orddict().
+build_tree(N, Nodes, Opts) ->
+    case lists:member(cycles, Opts) of
+        true ->
+            Expand = lists:flatten(lists:duplicate(N+1, Nodes));
+        false ->
+            Expand = Nodes
+    end,
+    {Tree, _} =
+        lists:foldl(fun(Elm, {Result, Worklist}) ->
+                            Len = erlang:min(N, length(Worklist)),
+                            {Children, Rest} = lists:split(Len, Worklist),
+                            NewResult = [{Elm, Children} | Result],
+                            {NewResult, Rest}
+                    end, {[], tl(Expand)}, Nodes),
+    orddict:from_list(Tree).
