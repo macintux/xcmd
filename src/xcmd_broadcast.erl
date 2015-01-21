@@ -405,7 +405,7 @@ maybe_exchange(undefined, State) ->
 maybe_exchange(Peer, State=#state{mods=[Mod | _],exchanges=Exchanges}) ->
     %% limit the number of exchanges this node can start concurrently.
     %% the exchange must (currently?) implement any "inbound" concurrency limits
-    ExchangeLimit = app_helper:get_env(riak_core, broadcast_start_exchange_limit, 1),
+    ExchangeLimit = app_helper:get_env(xcmd, broadcast_start_exchange_limit, 1),
     BelowLimit = not (length(Exchanges) >= ExchangeLimit),
     FreeMod = lists:keyfind(Mod, 1, Exchanges) =:= false,
     case BelowLimit and FreeMod of
@@ -573,7 +573,7 @@ schedule_exchange_tick() ->
     schedule_tick(exchange_tick, broadcast_exchange_timer, 10000).
 
 schedule_tick(Message, Timer, Default) ->
-    TickMs = app_helper:get_env(riak_core, Timer, Default),
+    TickMs = app_helper:get_env(xcmd, Timer, Default),
     erlang:send_after(TickMs, ?MODULE, Message).
 
 reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
@@ -598,21 +598,47 @@ init_peers(Members) ->
         N when N < 5 ->
             %% 2 to 4 members, start with a fully connected tree
             %% with cycles. it will be adjusted as needed
-            Tree = riak_core_util:build_tree(1, Members, [cycles]),
+            Tree = build_tree(1, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
             InitLazys  = [lists:nth(random:uniform(N - 2), Members -- [node() | InitEagers])];
         N when N < 10 ->
             %% 5 to 9 members, start with gossip tree used by
             %% riak_core_gossip. it will be adjusted as needed
-            Tree = riak_core_util:build_tree(2, Members, [cycles]),
+            Tree = build_tree(2, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
             InitLazys  = [lists:nth(random:uniform(N - 3), Members -- [node() | InitEagers])];
         N ->
             %% 10 or more members, use a tree similar to riak_core_gossip
             %% but with higher fanout (larger initial eager set size)
             NEagers = round(math:log(N) + 1),
-            Tree = riak_core_util:build_tree(NEagers, Members, [cycles]),
+            Tree = build_tree(NEagers, Members, [cycles]),
             InitEagers = orddict:fetch(node(), Tree),
             InitLazys  = [lists:nth(random:uniform(N - (NEagers + 1)), Members -- [node() | InitEagers])]
     end,
     {InitEagers, InitLazys}.
+
+%% @doc Convert a list of elements into an N-ary tree. This conversion
+%%      works by treating the list as an array-based tree where, for
+%%      example in a binary 2-ary tree, a node at index i has children
+%%      2i and 2i+1. The conversion also supports a "cycles" mode where
+%%      the array is logically wrapped around to ensure leaf nodes also
+%%      have children by giving them backedges to other elements.
+%%
+%% Copied from riak_core_util.erl
+-spec build_tree(N :: integer(), Nodes :: [term()], Opts :: [term()])
+                -> orddict:orddict().
+build_tree(N, Nodes, Opts) ->
+    case lists:member(cycles, Opts) of
+        true ->
+            Expand = lists:flatten(lists:duplicate(N+1, Nodes));
+        false ->
+            Expand = Nodes
+    end,
+    {Tree, _} =
+        lists:foldl(fun(Elm, {Result, Worklist}) ->
+                            Len = erlang:min(N, length(Worklist)),
+                            {Children, Rest} = lists:split(Len, Worklist),
+                            NewResult = [{Elm, Children} | Result],
+                            {NewResult, Rest}
+                    end, {[], tl(Expand)}, Nodes),
+    orddict:from_list(Tree).
