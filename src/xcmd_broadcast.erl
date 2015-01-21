@@ -22,7 +22,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0,
+-export([start_link/2,
          start_link/4,
          broadcast/2,
          ring_update/1,
@@ -102,22 +102,17 @@
 %%%===================================================================
 
 %% @doc Starts the broadcast server on this node. The initial membership list is
-%% fetched from the ring. If the node is a singleton then the initial eager and lazy
+%% passed in as an argument. If the node is a singleton then the initial eager and lazy
 %% sets are empty. If there are two nodes, each will be in the others eager set and the
 %% lazy sets will be empty. When number of members is less than 5, each node will initially
 %% have one other node in its eager set and lazy set. If there are more than five nodes
 %% each node will have at most two other nodes in its eager set and one in its lazy set, initally.
 %% In addition, after the broadcast server is started, a callback is registered with ring_events
 %% to generate membership updates as the ring changes.
--spec start_link() -> {ok, pid()} | ignore | {error, term()}.
-start_link() ->
-    {ok, Ring} = riak_core_ring_manager:get_my_ring(),
-    Members = all_broadcast_members(Ring),
+-spec start_link([node()], [module()]) -> {ok, pid()} | ignore | {error, term()}.
+start_link(Members, Mods) ->
     {InitEagers, InitLazys} = init_peers(Members),
-    Mods = app_helper:get_env(riak_core, broadcast_mods, [riak_core_metadata_manager]),
-    Res = start_link(Members, InitEagers, InitLazys, Mods),
-    riak_core_ring_events:add_sup_callback(fun ?MODULE:ring_update/1),
-    Res.
+    start_link(Members, InitEagers, InitLazys, Mods).
 
 %% @doc Starts the broadcast server on this node. `InitMembers' must be a list
 %% of all members known to this node when starting the broadcast server.
@@ -590,6 +585,7 @@ reset_peers(AllMembers, EagerPeers, LazyPeers, State) ->
       all_members   = ordsets:from_list(AllMembers)
      }.
 
+%% TODO Delete this func once it's no longer used?
 all_broadcast_members(Ring) ->
     riak_core_ring:all_members(Ring).
 
