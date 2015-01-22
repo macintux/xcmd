@@ -69,7 +69,10 @@
 
           %% an ets table to hold iterators opened
           %% by other nodes
-          iterators  :: ets:tab()
+          iterators  :: ets:tab(),
+
+          %% namespace prefix to use for storing data in dets
+          storage_namespace :: atom()
          }).
 
 -record(metadata_iterator, {
@@ -323,21 +326,24 @@ exchange(Peer) ->
                            ignore |
                            {stop, term()}.
 init([Opts]) ->
-    case data_root(Opts) of
-        undefined ->
-            {stop, no_data_dir};
-        DataRoot ->
-            ?ETS = ets:new(?ETS, [named_table,
-                                  {read_concurrency, true}, {write_concurrency, true}]),
-            Nodename = proplists:get_value(nodename, Opts, node()),
-            State = #state{serverid=Nodename,
-                           data_root=DataRoot,
-                           iterators=new_ets_tab()},
-            {ok, _} = init_manifest(State),
-            %% TODO: should do this out-of-band from startup so we don't block
-            init_from_files(State),
-            {ok, State}
-    end.
+    establish_state(proplists:get_value(data_root, Opts),
+                    proplists:get_value(storage_namespace, Opts, ?MODULE),
+                    proplists:get_value(nodename, Opts, node())).
+
+establish_state(undefined, _, _) ->
+    {stop, no_data_dir};
+establish_state(DataDir, StorageNamespace, Nodename) ->
+    ?ETS = ets:new(?ETS, [named_table,
+                          {read_concurrency, true}, {write_concurrency, true}]),
+    State = #state{serverid=Nodename,
+                   data_root=DataDir,
+                   iterators=new_ets_tab(),
+                   storage_namespace=StorageNamespace
+                  },
+    {ok, _} = init_manifest(State),
+    %% TODO: should do this out-of-band from startup so we don't block
+    init_from_files(State),
+    {ok, State}.
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
@@ -556,13 +562,13 @@ read_merge_write(PKey, Obj, State) ->
 
 store({FullPrefix, Key}=PKey, Metadata, State) ->
     _ = maybe_init_ets(FullPrefix),
-    maybe_init_dets(FullPrefix, State#state.data_root),
+    maybe_init_dets(State#state.storage_namespace, FullPrefix, State#state.data_root),
 
     Objs = [{Key, Metadata}],
     Hash = xcmd_object:hash(Metadata),
     ets:insert(ets_tab(FullPrefix), Objs),
     xcmd_hashtree:insert(PKey, Hash),
-    ok = dets_insert(dets_tabname(FullPrefix), Objs),
+    ok = dets_insert(dets_tabname(State#state.storage_namespace, FullPrefix), Objs),
     {Metadata, State}.
 
 read({FullPrefix, Key}) ->
@@ -617,14 +623,14 @@ init_ets(FullPrefix) ->
 new_ets_tab() ->
     ets:new(undefined, [{read_concurrency, true}, {write_concurrency, true}]).
 
-maybe_init_dets(FullPrefix, DataRoot) ->
-    case dets:info(dets_tabname(FullPrefix)) of
-        undefined -> init_dets(FullPrefix, DataRoot);
+maybe_init_dets(StorageNamespace, FullPrefix, DataRoot) ->
+    case dets:info(dets_tabname(StorageNamespace, FullPrefix)) of
+        undefined -> init_dets(StorageNamespace, FullPrefix, DataRoot);
         _ -> ok
     end.
 
-init_dets(FullPrefix, DataRoot) ->
-    TabName = dets_tabname(FullPrefix),
+init_dets(StorageNamespace, FullPrefix, DataRoot) ->
+    TabName = dets_tabname(StorageNamespace, FullPrefix),
     FileName = dets_file(DataRoot, FullPrefix),
     {ok, TabName} = dets:open_file(TabName, [{file, FileName}]),
     dets_insert(?MANIFEST, [{FullPrefix, TabName, FileName}]).
@@ -639,8 +645,8 @@ dets_insert(TabName, Objs) ->
     ok = dets:insert(TabName, Objs),
     ok = dets:sync(TabName).
 
-dets_tabname(FullPrefix) -> {?MODULE, FullPrefix}.
-dets_tabname_to_prefix({?MODULE, FullPrefix}) ->  FullPrefix.
+dets_tabname(StorageNamespace, FullPrefix) -> {StorageNamespace, FullPrefix}.
+dets_tabname_to_prefix({_, FullPrefix}) ->  FullPrefix.
 
 dets_file(DataRoot, FullPrefix) ->
     filename:join(DataRoot, dets_filename(FullPrefix)).
@@ -669,6 +675,3 @@ dets_fold_tabnames(Fun, Acc0) ->
     dets:foldl(fun({_FullPrefix, TabName, _FileName}, Acc) ->
                        Fun(TabName, Acc)
                end, Acc0, ?MANIFEST).
-
-data_root(Opts) ->
-    proplists:get_value(data_dir, Opts).

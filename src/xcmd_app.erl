@@ -9,8 +9,10 @@
 %% Application callbacks
 %% ===================================================================
 
-start(_StartType, _StartArgs) ->
-    xcmd_sup:start_link().
+start(_StartType, [DataDirPath, MemberList]) ->
+    xcmd_sup:start_link(DataDirPath, MemberList, []);
+start(_StartType, [DataDirPath, MemberList, Options]) ->
+    xcmd_sup:start_link(DataDirPath, MemberList, Options).
 
 stop(_State) ->
     ok.
