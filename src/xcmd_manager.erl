@@ -326,7 +326,7 @@ exchange(Peer) ->
                            ignore |
                            {stop, term()}.
 init([Opts]) ->
-    establish_state(proplists:get_value(data_root, Opts),
+    establish_state(proplists:get_value(data_dir, Opts),
                     proplists:get_value(storage_namespace, Opts, ?MODULE),
                     proplists:get_value(nodename, Opts, node())).
 
